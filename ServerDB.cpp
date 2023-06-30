@@ -1,7 +1,3 @@
-#include <iostream>
-#include <string>
-#include <pqxx/pqxx>
-#include <mutex>
 
 #include "ServerDB.hpp"
 
@@ -9,18 +5,19 @@
 
 ThreadSavedQueue<std::shared_ptr<DB::Request>> g_ThSdQu;
 
-pqxx::connection g_connection("dbname=ServerDB user=postgres password=1234");
+pqxx::connection g_connection(DB::getConnection("configs/DBconfig.json"));
 
 
 void DB::UserListTable::AddToTable(std::string &loggin, std::string &password) {   
     pqxx::work txn(g_connection);
+
     pqxx::result res = txn.exec("SELECT id FROM " + table_name + " ORDER BY id DESC LIMIT 1");
+
 
     int last_user_id = res[0][0].as<int>();
 
     txn.exec("INSERT INTO " + table_name + " (id, loggin, password) \
-    VALUES (" +
-             std::to_string(++last_user_id) + ", '" + loggin + "', '" + password + "')");
+    VALUES (" + std::to_string(++last_user_id) + ", '" + loggin + "', '" + password + "')");
     
     txn.exec("create table User" + std::to_string(last_user_id) + "_ ( \
     SolarV INT, SolarA INT, SolarStatus INT, \
@@ -32,6 +29,13 @@ void DB::UserListTable::AddToTable(std::string &loggin, std::string &password) {
     V3 INT, A3 INT, Status3 INT \
     )");
 
+    res = txn.exec("SELECT id FROM group_list ORDER BY id DESC LIMIT 1");
+
+    int group_list_last_id = res[0][0].as<int>();
+
+    txn.exec("INSERT INTO group_list  \
+    VALUES (" + std::to_string(++group_list_last_id) + ", " + std::to_string(last_user_id) + ", 0, 0, '-', 0)");
+    
     txn.commit();
 }
 
@@ -75,6 +79,20 @@ void DB::UserESPTable::AddToTable(ESPCondition &cond) {
     txn.commit();
 }
 
+void DB::GroupListTable::UpdateTable(size_t id_client, ConsumersData data) {
+            pqxx::work txn(g_connection);
+            
+            txn.exec("update " + table_name + 
+            " set priority = " + std::to_string(data.priority) + 
+            ", id_consumer = " + std::to_string(data.id) + 
+            ", name = '" + data.consumer_name + 
+            "', status  = " + std::to_string(data.status) + 
+            " where id_client  = " + std::to_string(id_client));
+
+            txn.commit();
+
+        }
+
 template <typename T>
 ThreadSavedQueue<T>::ThreadSavedQueue(const ThreadSavedQueue &that) {
     std::lock_guard<std::mutex> lock(that.MyMutex);
@@ -102,6 +120,8 @@ T& ThreadSavedQueue<T>::pop() {
 
 void DB::Handler() {
     DB::UserListTable user_list(std::string("user_list"));
+
+    DB::GroupListTable group_list(std::string("group_list"));
 
     std::unordered_map<int, DB::UserESPTable> connected_users; // need to make a deletion of an unconnected users from map
 
@@ -141,6 +161,13 @@ void DB::Handler() {
 
             req->set_response(DB::Response(true));
             break;
+
+        case DB::InsertClientGroup_:
+            int id = user_list.GetID(req->user().loggin, req->user().password);
+            group_list.UpdateTable(id, req->consumer_data());
+
+            req->set_response(DB::Response(true));
+            break;
         }
     }
 }
@@ -170,4 +197,43 @@ bool DB::InsertESPCondition(std::string loggin, std::string password, DB::ESPCon
     g_ThSdQu.push(request);
 
     return request->response()->status();
+}
+
+bool DB::InsertClientGroup(std::string loggin, std::string password, DB::ConsumersData& data) {
+    DB::RequestType req_type = DB::InsertClientGroup_;
+    std::shared_ptr<DB::Request> request = std::make_shared<DB::Request>(std::move(DB::Request(req_type, DB::User(loggin, password), data)));
+
+    g_ThSdQu.push(request);
+
+    return request->response()->status();
+}
+
+std::string DB::getConnection(const std::string& filename) {
+    std::ifstream file(filename);
+    if (!file.is_open()) {
+        std::cerr << "Failed to open file: " << filename << std::endl;
+        return "";
+    }
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    file.close();
+
+    Json::Value root;
+    Json::CharReaderBuilder reader;
+    std::string errors;
+    bool parsingSuccessful = Json::parseFromStream(reader, buffer, &root, &errors);
+    if (!parsingSuccessful) {
+        std::cerr << "Failed to parse JSON: " << errors << std::endl;
+        return "";
+    }
+
+    std::string dbname = root["dbname"].asString();
+    std::string user = root["user"].asString();
+    std::string password = root["password"].asString();
+
+    std::stringstream connectionString;
+    connectionString << "dbname=" << dbname << " user=" << user << " password=" << password;
+
+    return connectionString.str();
 }

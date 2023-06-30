@@ -3,8 +3,12 @@
 #include <mutex>
 #include <memory>
 #include <unordered_map>
-
 #include <condition_variable>
+#include <fstream>
+#include <sstream>
+#include <iostream>
+
+#include <json/json.h>
 
 #include<pqxx/pqxx>
 
@@ -50,6 +54,14 @@ namespace DB {
         int V3, A3, Status3;
     };
 
+    struct ConsumersData
+        {
+            size_t priority;
+            size_t id;
+            std::string consumer_name;
+            bool status;
+        };
+
     struct User {
         User(std::string loggin, std::string password): loggin(loggin), password(password) {
         }
@@ -61,7 +73,8 @@ namespace DB {
     enum RequestType {
         InsertUser_,
         Authorization_,
-        InsertESPCondition_
+        InsertESPCondition_,
+        InsertClientGroup_
     };
 
     struct Response {
@@ -81,6 +94,7 @@ namespace DB {
         private:
 
         ESPCondition condition;
+        ConsumersData consumer_data;
         bool user_status;
 
     };
@@ -95,6 +109,11 @@ namespace DB {
                 return_field = nullptr;
             }
 
+            Request(RequestType &type, User user, ConsumersData &data): 
+            type_(type), user_(user), consumer_data_(data) {
+                return_field = nullptr;
+            }
+
             Request(Request&& other) {
                 std::lock_guard<std::mutex> lock_other(other.Mutex);
                 std::lock_guard<std::mutex> lock(Mutex);
@@ -102,12 +121,15 @@ namespace DB {
                 user_ = other.user_;
                 
                 condition_ = other.condition_;
+                consumer_data_ = other.consumer_data_;
                 return_field = other.return_field;
             }
             
             User& user() { return user_; }
 
             ESPCondition& condition() { return condition_; }
+
+            ConsumersData& consumer_data() {return consumer_data_;};
 
             RequestType& type() { return type_; }
 
@@ -131,6 +153,7 @@ namespace DB {
         private:
             ESPCondition condition_;
             User user_;
+            ConsumersData consumer_data_;
             RequestType type_;
             std::shared_ptr<Response> return_field;
             bool has_data;
@@ -157,6 +180,20 @@ namespace DB {
         std::string table_name;
     };
 
+    class GroupListTable {
+
+        public:
+        GroupListTable(std::string table_name):
+        table_name(table_name) {
+        }
+        ~GroupListTable() = default;
+
+        void UpdateTable(size_t id_client, ConsumersData data);
+        private:
+        std::string table_name;
+    };
+
+
     class UserESPTable {
         public:
         UserESPTable() = default;
@@ -175,6 +212,7 @@ namespace DB {
         std::string table_name;
     };
 
+
     void Handler();
 
     bool InsertUser(std::string loggin, std::string password);
@@ -183,6 +221,9 @@ namespace DB {
 
     bool InsertESPCondition(std::string loggin, std::string password, ESPCondition &condition);
 
+    bool InsertClientGroup(std::string loggin, std::string password, DB::ConsumersData& data);
+
+    std::string getConnection(const std::string& filename);
 } //DB
 
 #endif // SERVERDB_H

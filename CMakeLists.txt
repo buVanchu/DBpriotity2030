@@ -12,6 +12,8 @@ target_link_libraries(ServerDB pqxx)
 
 target_link_libraries(ServerDB pthread)
 
+target_link_libraries(ServerDB jsoncpp)
+
 add_executable(ServerD ${SOURCE_EXE})	
 
 target_link_libraries(ServerD ServerDB)	
